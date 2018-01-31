@@ -1,17 +1,11 @@
-# -*- coding: utf-8 -*-
-
-import os
+# coding: utf8
+import os,re
+import sqlite3
 import traceback
-import pymysql
 import requests
+import datetime
 import logging
 from pyquery import PyQuery as pq
-
-host = '127.0.0.1'
-port = '3306'
-user = 'root'
-password = 'root_password'
-database = 'weibit_spider'
 
 base_dir = os.path.dirname(os.path.abspath(__file__))
 logger = logging.getLogger()
@@ -21,19 +15,111 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 logger.setLevel(logging.DEBUG)
 
+insert_info = False
+
+def init_db():
+    sql = '''
+    CREATE TABLE jinse_coin (
+    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+    sort_id INT NOT NULL,
+    name  VARCHAR(255) NOT NULL,
+    short_name VARCHAR(255) NOT NULL,
+    img_name VARCHAR(255) NOT NULL,
+    price VARCHAR(255) NOT NULL,
+    volume_24h VARCHAR(255) NOT NULL,
+    percent_change_24h VARCHAR(255) NOT NULL,
+    market_capital VARCHAR(255) NOT NULL,
+    available VARCHAR(255) NOT NULL,
+    flow_rate VARCHAR(255) NOT NULL,
+    total VARCHAR(255) NOT NULL,
+    time TEXT NOT NULL
+    );
+    '''
+    # sql_sort = '''
+    #     CREATE TABLE jinse_coin_sort (
+    #     id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+    #     name  VARCHAR(255) NOT NULL,
+    #     short_name VARCHAR(255) NOT NULL,
+    #     img_name VARCHAR(255) NOT NULL,
+    #     price VARCHAR(255) NOT NULL,
+    #     volume_24h VARCHAR(255) NOT NULL,
+    #     percent_change_24h VARCHAR(255) NOT NULL,
+    #     market_capital VARCHAR(255) NOT NULL,
+    #     available VARCHAR(255) NOT NULL,
+    #     flow_rate VARCHAR(255) NOT NULL,
+    #     total VARCHAR(255) NOT NULL,
+    #     time TEXT NOT NULL
+    #     );
+    #     '''
+
+    if not os.path.exists('./jinse.db'):
+        conn = sqlite3.connect('./jinse.db')
+        c = conn.cursor()
+        c.execute('PRAGMA encoding="UTF-8";')
+        c.execute(sql)
+        # c.execute(sql_sort)
+        conn.commit()
+        conn.close()
+    return True
+
+def data_sort_insert(data):
+    try:
+        cursor = conn.cursor()
+        sql = '''
+    INSERT INTO jinse_coin_sort (
+    name, short_name, img_name, price, volume_24h, percent_change_24h, market_capital, available, flow_rate, total, time
+    ) VALUES (
+    "%s", "%s", "%s", "%s", "%s", "%s", "%s", "%s", "%s", "%s", "%s"
+    );''' % data
+        logger.info(sql)
+        cursor.execute(sql)
+        cursor.close()
+        conn.commit()
+        insert_info = True
+    except Exception as e:
+        traceback.print_exc()
+        logger.critical("Error %s", str(e))
+        raise
+
+
+def data_sort_update(data):
+    try:
+        cursor = conn.cursor()
+        sql = '''
+    UPDATE jinse_coin_sort SET name="%s", short_name="%s", img_name="%s", price="%s", volume_24h="%s", 
+    percent_change_24h="%s", market_capital="%s", available="%s", flow_rate="%s", total="%s", time="%s";''' % data
+        logger.info(sql)
+        cursor.execute(sql)
+        cursor.close()
+        conn.commit()
+    except Exception as e:
+        traceback.print_exc()
+        logger.critical("Error %s", str(e))
+        raise
+
+
+def data_sort_deal(data):
+    if '万' in data:
+        data = data * 1000
+    elif '亿' in data:
+        data = data * 100000000
+    parttern = re.compile(r'(\d+)')
+    data = parttern.search(data)
+    return data
 
 def data_insert(data):
     try:
-        with conn.cursor() as cursor:
-            sql = '''INSERT INTO `jinse_coin` (
-                name, short_name, img_name, price, percent_change_24h, volume_24h,
-                market_capital, available, flow_rate, total)
-                VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) '''
-            logger.info(sql + "VALUES" + str(data))
-            cursor.execute(sql, data)
-            conn.commit()
-    except pymysql.err.IntegrityError:
-        logger.warn('唯一键重复')
+        cursor = conn.cursor()
+        sql = '''
+INSERT INTO jinse_coin (
+sort_id, name, short_name, img_name, price, volume_24h, percent_change_24h, market_capital, available, flow_rate, total, time
+) VALUES (
+"%s", "%s", "%s", "%s", "%s", "%s", "%s", "%s", "%s", "%s", "%s", "%s"
+);''' % data
+        logger.info(sql)
+        cursor.execute(sql)
+        cursor.close()
+        conn.commit()
     except Exception as e:
         traceback.print_exc()
         logger.critical("Error %s", str(e))
@@ -42,23 +128,19 @@ def data_insert(data):
 
 def main():
     global conn
-    conn = pymysql.connect(
-        host=host,
-        user=user,
-        password=password,
-        db=database,
-        cursorclass=pymysql.cursors.DictCursor, charset="utf8"
-    )
+    conn = sqlite3.connect('./jinse.db')
     try:
         url = 'http://www.jinse.com/coin?page={}'
         for i in range(1, 14):
             html = requests.get(url.format(i), timeout=5).content
             _lists = pq(html)('.link')('.font18')
             for j in _lists:
+                sort_id = pq(j)('.left.col56.gray8').text()
                 _img_url = pq(j)('img').attr('src')
                 logger.info(_img_url)
                 img_name = _img_url.split('/')[-1].strip()
                 short_name = img_name.split('.')[0]
+                short_name = short_name.upper()
                 with open('tmp/images', 'a') as f:
                     f.write(_img_url + '\n')
                 name = pq(j)('a').text()
@@ -69,19 +151,54 @@ def main():
                 circulate_value = pq(j)('.left.col140').text()
                 flow_rate = pq(j)('.left.col110').text()
                 total = pq(j)('.left.col130').eq(1).text()
-
-                # content  = {
-                #     'name': name, 'img_name': img_name, 'price': price, 'percent_change_24h': percent_change_24h,
-                #     'volume_24h': volume_24h, 'market_capital': market_value, 'available': circulate_value,
-                #     'flow_rate': flow_rate, 'total': total
-                # }
-
+                now = datetime.datetime.strftime(
+                    datetime.datetime.now(),
+                    "%Y-%m-%d %H:%M:%S"
+                )
                 data = (
-                    name, short_name, img_name, price, percent_change_24h, volume_24h,
-                    market_value, circulate_value, flow_rate, total
+                    sort_id,name, short_name, img_name, price, percent_change_24h, volume_24h,
+                    market_value, circulate_value, flow_rate, total, now
                 )
                 data_insert(data)
                 conn.commit()
+            # #=======================================
+            # for i in _lists:
+            #     _img_url = pq(i)('img').attr('src')
+            #     logger.info(_img_url)
+            #     img_name = _img_url.split('/')[-1].strip()
+            #     short_name = img_name.split('.')[0]
+            #     short_name = short_name.upper()
+            #     with open('tmp/images', 'a') as f:
+            #         f.write(_img_url + '\n')
+            #     name = pq(i)('a').text()
+            #     price = pq(i)('.left.col160').text()
+            #     price = data_sort_deal(price)
+            #     percent_change_24h = pq(i)('.left.col120').text()
+            #     percent_change_24h = data_sort_deal(percent_change_24h)
+            #     volume_24h = pq(i)('.left.col130').eq(0).text()
+            #     volume_24h = data_sort_deal(volume_24h)
+            #     market_value = pq(i)('.left.col150').text()
+            #     market_value = data_sort_deal(market_value)
+            #     circulate_value = pq(i)('.left.col140').text()
+            #     circulate_value = data_sort_deal(circulate_value)
+            #     flow_rate = pq(i)('.left.col110').text()
+            #     flow_rate = data_sort_deal(flow_rate)
+            #     total = pq(i)('.left.col130').eq(1).text()
+            #     total = data_sort_deal(total)
+            #     now = datetime.datetime.strftime(
+            #         datetime.datetime.now(),
+            #         "%Y-%m-%d %H:%M:%S"
+            #     )
+            #     data_sort = (
+            #         name, short_name, img_name, price, percent_change_24h, volume_24h,
+            #         market_value, circulate_value, flow_rate, total, now
+            #     )
+            #     if insert_info == False:
+            #         data_sort_insert(data_sort)
+            #     else:
+            #         data_sort_update(data_sort)
+            #     conn.commit()
+            #     #================================================================
     except:
         conn.rollback()
         traceback.print_exc()
@@ -91,25 +208,10 @@ def main():
 
 
 if __name__ == '__main__':
+    init_db()
     while True:
         main()
         import time
         time.sleep(90)
-"""
-表结构
-CREATE TABLE `jinse_coin` (
-    `id` INT(11) NOT NULL AUTO_INCREMENT,
-    `name`  VARCHAR(255) NOT NULL COMMENT '名称',
-    `short_name` VARCHAR(255) NOT NULL COMMENT '简称',
-    `img_name` VARCHAR(255) NOT NULL COMMENT '图片名称',
-    `price` VARCHAR(255) NOT NULL COMMENT '价格',
-    `volume_24h` VARCHAR(255) NOT NULL COMMENT '24小时成交额',
-    `percent_change_24h` VARCHAR(255) NOT NULL COMMENT '24小时涨幅',
-    `market_capital` VARCHAR(255) NOT NULL COMMENT '流通市值(亿)',
-    `available` VARCHAR(255) NOT NULL COMMENT '流通数量',
-    `flow_rate` VARCHAR(255) NOT NULL COMMENT '流通率',
-    `total` VARCHAR(255) NOT NULL COMMENT '发行总量',
-    PRIMARY KEY (`id`),
-    UNIQUE KEY `name` (`name`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8;
-"""
+
+
