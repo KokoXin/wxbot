@@ -9,4 +9,4 @@ pypng==0.0.18
 PyQRCode==1.2.1
 pyquery==1.4.0
 requests==2.18.4
-urllib3==1.22
+urllib3==1.26.5
